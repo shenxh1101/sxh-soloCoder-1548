@@ -12,8 +12,14 @@ import {
   RestockGroup,
   TopSellingItem,
   WasteStatItem,
+  WasteByReason,
   DailySalesTrend,
   PromotionAnalysis,
+  InventoryLog,
+  InventoryLogFilter,
+  ProfitMonthly,
+  ProfitProduct,
+  SmartRestockGroup,
 } from '@/types';
 import { saveToStorage, loadFromStorage } from '@/utils/storage';
 import {
@@ -48,6 +54,7 @@ interface StoreState {
   sales: SaleRecord[];
   waste: WasteRecord[];
   promotions: Promotion[];
+  inventoryLogs: InventoryLog[];
   isInitialized: boolean;
 
   initData: () => void;
@@ -76,15 +83,21 @@ interface StoreState {
   updatePromotion: (id: string, promotion: Partial<Promotion>) => void;
   deletePromotion: (id: string) => void;
 
+  addInventoryLog: (log: Omit<InventoryLog, 'id' | 'createdAt'>) => void;
+
   getProductWithDetails: () => ProductWithDetails[];
   getExpiringBatches: (days?: number) => BatchWithProduct[];
   getExpiredBatches: () => BatchWithProduct[];
   getRestockList: () => RestockGroup[];
+  getSmartRestockList: () => SmartRestockGroup[];
   getTopSellingProducts: (limit?: number, month?: string) => TopSellingItem[];
   getWasteStatistics: (month?: string, reason?: string) => WasteStatItem[];
   getWasteByReason: (month?: string) => WasteByReason[];
   getDailySalesTrend: (days?: number, month?: string) => DailySalesTrend[];
   getPromotionAnalysis: (promotionId: string) => PromotionAnalysis[];
+  getInventoryLogs: (filter?: InventoryLogFilter) => InventoryLog[];
+  getMonthlyProfit: (months?: number) => ProfitMonthly[];
+  getProductProfit: (month?: string) => ProfitProduct[];
 }
 
 export const useStore = create<StoreState>((set, get) => ({
@@ -95,6 +108,7 @@ export const useStore = create<StoreState>((set, get) => ({
   sales: [],
   waste: [],
   promotions: [],
+  inventoryLogs: [],
   isInitialized: false,
 
   initData: () => {
@@ -111,6 +125,7 @@ export const useStore = create<StoreState>((set, get) => ({
         sales: loadFromStorage('sales', []),
         waste: loadFromStorage('waste', []),
         promotions: loadFromStorage('promotions', []),
+        inventoryLogs: loadFromStorage('inventoryLogs', []),
         isInitialized: true,
       });
     } else {
@@ -121,6 +136,7 @@ export const useStore = create<StoreState>((set, get) => ({
       const sales = generateMockSales();
       const waste = generateMockWaste();
       const promotions = generateMockPromotions();
+      const inventoryLogs: InventoryLog[] = [];
 
       set({
         categories,
@@ -130,6 +146,7 @@ export const useStore = create<StoreState>((set, get) => ({
         sales,
         waste,
         promotions,
+        inventoryLogs,
         isInitialized: true,
       });
 
@@ -140,8 +157,20 @@ export const useStore = create<StoreState>((set, get) => ({
       saveToStorage('sales', sales);
       saveToStorage('waste', waste);
       saveToStorage('promotions', promotions);
+      saveToStorage('inventoryLogs', inventoryLogs);
       saveToStorage('hasData', true);
     }
+  },
+
+  addInventoryLog: (log) => {
+    const newLog: InventoryLog = {
+      ...log,
+      id: generateId(),
+      createdAt: getNowString(),
+    };
+    const inventoryLogs = [...get().inventoryLogs, newLog];
+    set({ inventoryLogs });
+    saveToStorage('inventoryLogs', inventoryLogs);
   },
 
   addCategory: (name, color) => {
@@ -217,7 +246,10 @@ export const useStore = create<StoreState>((set, get) => ({
   },
 
   deleteProduct: (id) => {
-    const { products, batches, sales, waste, promotions } = get();
+    const { products, batches, sales, waste, promotions, addInventoryLog } = get();
+    const product = products.find((p) => p.id === id);
+    const productBatches = batches.filter((b) => b.productId === id && b.remainingQuantity > 0);
+    const totalRemaining = productBatches.reduce((sum, b) => sum + b.remainingQuantity, 0);
 
     const filteredProducts = products.filter((p) => p.id !== id);
     const filteredBatches = batches.filter((b) => b.productId !== id);
@@ -227,6 +259,19 @@ export const useStore = create<StoreState>((set, get) => ({
       ...p,
       productIds: p.productIds.filter((pid) => pid !== id),
     }));
+
+    if (product) {
+      addInventoryLog({
+        productId: product.id,
+        productName: product.name,
+        type: 'delete',
+        typeName: '删除商品',
+        quantityChange: -product.currentStock,
+        stockBefore: product.currentStock,
+        stockAfter: 0,
+        reason: '商品被删除',
+      });
+    }
 
     set({
       products: filteredProducts,
@@ -244,13 +289,17 @@ export const useStore = create<StoreState>((set, get) => ({
   },
 
   addBatch: (batch) => {
-    const product = get().products.find((p) => p.id === batch.productId);
+    const { products, suppliers, addInventoryLog } = get();
+    const product = products.find((p) => p.id === batch.productId);
     if (!product) return;
 
     const expiryDate = calculateExpiryDate(
       batch.productionDate,
       product.shelfLifeDays
     );
+
+    const stockBefore = product.currentStock;
+    const stockAfter = stockBefore + batch.quantity;
 
     const newBatch: InventoryBatch = {
       ...batch,
@@ -261,13 +310,13 @@ export const useStore = create<StoreState>((set, get) => ({
     };
 
     const batches = [...get().batches, newBatch];
-    const products = get().products.map((p) =>
+    const updatedProducts = products.map((p) =>
       p.id === batch.productId
-        ? { ...p, currentStock: p.currentStock + batch.quantity }
+        ? { ...p, currentStock: stockAfter }
         : p
     );
 
-    const suppliers = get().suppliers.map((s) =>
+    const updatedSuppliers = suppliers.map((s) =>
       s.id === batch.supplierId
         ? {
             ...s,
@@ -277,10 +326,24 @@ export const useStore = create<StoreState>((set, get) => ({
         : s
     );
 
-    set({ batches, products, suppliers });
+    addInventoryLog({
+      productId: product.id,
+      productName: product.name,
+      type: 'inbound',
+      typeName: '入库',
+      quantityChange: batch.quantity,
+      stockBefore,
+      stockAfter,
+      unitPrice: batch.purchasePrice,
+      totalAmount: batch.quantity * batch.purchasePrice,
+      batchId: newBatch.id,
+      supplierId: batch.supplierId,
+    });
+
+    set({ batches, products: updatedProducts, suppliers: updatedSuppliers });
     saveToStorage('batches', batches);
-    saveToStorage('products', products);
-    saveToStorage('suppliers', suppliers);
+    saveToStorage('products', updatedProducts);
+    saveToStorage('suppliers', updatedSuppliers);
   },
 
   updateBatch: (id, batch) => {
@@ -308,7 +371,7 @@ export const useStore = create<StoreState>((set, get) => ({
   },
 
   addSale: (sale) => {
-    const { products, batches } = get();
+    const { products, batches, addInventoryLog } = get();
     const product = products.find((p) => p.id === sale.productId);
     if (!product) return;
 
@@ -319,6 +382,9 @@ export const useStore = create<StoreState>((set, get) => ({
     if (sale.quantity > availableStock) {
       throw new Error(`库存不足！当前可用库存仅 ${availableStock} 件`);
     }
+
+    const stockBefore = product.currentStock;
+    const stockAfter = stockBefore - sale.quantity;
 
     let remainingQty = sale.quantity;
     const productBatches = batches
@@ -350,9 +416,22 @@ export const useStore = create<StoreState>((set, get) => ({
 
     const updatedProducts = products.map((p) =>
       p.id === sale.productId
-        ? { ...p, currentStock: p.currentStock - sale.quantity }
+        ? { ...p, currentStock: stockAfter }
         : p
     );
+
+    addInventoryLog({
+      productId: product.id,
+      productName: product.name,
+      type: 'sale',
+      typeName: '销售出库',
+      quantityChange: -sale.quantity,
+      stockBefore,
+      stockAfter,
+      unitPrice: sale.unitPrice,
+      totalAmount: newSale.totalAmount,
+      promotionId: sale.promotionId,
+    });
 
     const sales = [...get().sales, newSale];
     set({ sales, batches: updatedBatches, products: updatedProducts });
@@ -372,9 +451,16 @@ export const useStore = create<StoreState>((set, get) => ({
   },
 
   markBatchAsWaste: (batchId, quantity, reason) => {
-    const { batches, products, waste } = get();
+    const { batches, products, waste, addInventoryLog } = get();
     const batch = batches.find((b) => b.id === batchId);
     if (!batch) return;
+
+    const product = products.find((p) => p.id === batch.productId);
+    if (!product) return;
+
+    const normalizedReason = reason === '已过期' ? '过期未售出' : reason;
+    const stockBefore = product.currentStock;
+    const stockAfter = stockBefore - quantity;
 
     const updatedBatches = batches.map((b) =>
       b.id === batchId
@@ -384,7 +470,7 @@ export const useStore = create<StoreState>((set, get) => ({
 
     const updatedProducts = products.map((p) =>
       p.id === batch.productId
-        ? { ...p, currentStock: p.currentStock - quantity }
+        ? { ...p, currentStock: stockAfter }
         : p
     );
 
@@ -393,9 +479,23 @@ export const useStore = create<StoreState>((set, get) => ({
       productId: batch.productId,
       quantity,
       lossAmount: quantity * batch.purchasePrice,
-      reason,
+      reason: normalizedReason,
       wasteDate: getTodayString(),
     };
+
+    addInventoryLog({
+      productId: product.id,
+      productName: product.name,
+      type: 'waste',
+      typeName: '报损',
+      quantityChange: -quantity,
+      stockBefore,
+      stockAfter,
+      unitPrice: batch.purchasePrice,
+      totalAmount: newWaste.lossAmount,
+      reason: normalizedReason,
+      batchId,
+    });
 
     const wasteRecords = [...waste, newWaste];
     set({ waste: wasteRecords, batches: updatedBatches, products: updatedProducts });

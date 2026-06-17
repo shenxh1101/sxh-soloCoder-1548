@@ -150,3 +150,63 @@ export interface PromotionAnalysis {
   increasePercent: number;
   promotionRevenue: number;
 }
+
+export type InventoryLogType = 'inbound' | 'sale' | 'waste' | 'adjust' | 'delete';
+
+export interface InventoryLog {
+  id: string;
+  productId: string;
+  productName: string;
+  type: InventoryLogType;
+  typeName: string;
+  quantityChange: number;
+  stockBefore: number;
+  stockAfter: number;
+  unitPrice?: number;
+  totalAmount?: number;
+  reason?: string;
+  batchId?: string;
+  supplierId?: string;
+  operator?: string;
+  createdAt: string;
+}
+
+export interface ProfitMonthly {
+  month: string;
+  revenue: number;
+  cost: number;
+  wasteLoss: number;
+  grossProfit: number;
+  grossMargin: number;
+}
+
+export interface ProfitProduct {
+  productId: string;
+  productName: string;
+  categoryName: string;
+  quantity: number;
+  revenue: number;
+  cost: number;
+  wasteLoss: number;
+  grossProfit: number;
+  grossMargin: number;
+}
+
+export interface SmartRestockItem extends RestockItem {
+  avgDailySales: number;
+  estimatedDaysLeft: number;
+  suggestedPurchaseAmount: number;
+  lastPurchasePrice: number;
+}
+
+export interface SmartRestockGroup extends RestockGroup {
+  items: SmartRestockItem[];
+  totalSuggestedAmount: number;
+}
+
+export interface InventoryLogFilter {
+  productId?: string;
+  type?: string;
+  startDate?: string;
+  endDate?: string;
+}
