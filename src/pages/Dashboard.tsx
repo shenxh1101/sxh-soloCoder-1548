@@ -14,6 +14,10 @@ import {
   TrendingUp,
   X,
   CheckCircle,
+  TrendingDown,
+  Zap,
+  AlertCircle,
+  Calculator,
 } from 'lucide-react';
 import { useStore } from '@/store';
 import { formatDate, formatDateChinese, getCurrentMonthRange } from '@/utils/dateUtils';
@@ -50,7 +54,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
-import { BatchWithProduct, RestockGroup, RestockItem } from '@/types';
+import { BatchWithProduct, SmartRestockGroup, SmartRestockItem, RestockItem } from '@/types';
 
 type DialogType = 'addProduct' | 'quickStock' | 'recordSale' | null;
 
@@ -69,6 +73,7 @@ export default function Dashboard() {
     initData,
     getExpiringBatches,
     getRestockList,
+    getSmartRestockList,
     addBatch,
     addSale,
     markBatchAsWaste,
@@ -94,7 +99,7 @@ export default function Dashboard() {
   }, [initData]);
 
   const expiringBatches = getExpiringBatches(3);
-  const restockGroups = getRestockList();
+  const restockGroups = getSmartRestockList();
   const { start } = getCurrentMonthRange();
 
   const totalProducts = products.length;
@@ -402,7 +407,7 @@ export default function Dashboard() {
             <div className="flex items-center justify-between">
               <CardTitle className="flex items-center gap-2 text-lg">
                 <ShoppingCart className="h-5 w-5 text-warning" />
-                补货提醒
+                智能补货提醒
               </CardTitle>
               <Badge variant="warning">{restockCount} 个商品</Badge>
             </div>
@@ -411,11 +416,11 @@ export default function Dashboard() {
             {restockGroups.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground">
                 <CheckCircle className="h-12 w-12 mx-auto mb-2 text-success/50" />
-                <p>暂无需要补货的商品</p>
+                <p>库存充足，无需补货</p>
               </div>
             ) : (
               <Accordion type="single" collapsible className="space-y-2">
-                {restockGroups.map((group: RestockGroup) => (
+                {restockGroups.map((group: SmartRestockGroup) => (
                   <AccordionItem
                     key={group.supplierId}
                     value={group.supplierId}
@@ -441,55 +446,102 @@ export default function Dashboard() {
                             </Badge>
                           </div>
                         </div>
-                        <Badge variant="warning">{group.items.length} 种</Badge>
+                        <div className="flex items-center gap-2">
+                          <Badge variant="warning">{group.items.length} 种</Badge>
+                          <Badge variant="default" className="bg-green-100 text-green-800 hover:bg-green-100">
+                            ¥{group.totalSuggestedAmount.toFixed(2)}
+                          </Badge>
+                        </div>
                       </div>
                     </AccordionTrigger>
                     <AccordionContent>
                       <div className="space-y-3 pb-2">
-                        {group.items.map((item) => (
-                          <div
-                            key={item.productId}
-                            className="p-3 rounded-lg bg-background border border-warning/20"
-                          >
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="flex-1 min-w-0">
-                                <h5 className="font-medium text-foreground truncate">
-                                  {item.productName}
-                                </h5>
-                                <div className="flex items-center gap-4 mt-1 text-xs text-muted-foreground">
-                                  <span>
-                                    当前库存:{' '}
-                                    <span className="text-destructive font-medium">
-                                      {item.currentStock}
-                                    </span>
-                                  </span>
-                                  <span>
-                                    阈值: {item.stockThreshold}
-                                  </span>
-                                  <span>
-                                    建议补货:{' '}
-                                    <span className="text-success font-medium">
-                                      {item.suggestedQuantity}
-                                    </span>
-                                  </span>
+                        {group.items.map((item: SmartRestockItem) => {
+                          const isStockLow = item.currentStock <= item.stockThreshold;
+                          const isSellingFast = item.avgDailySales > 0 && item.estimatedDaysLeft <= 7;
+                          return (
+                            <div
+                              key={item.productId}
+                              className="p-3 rounded-lg bg-background border border-warning/20"
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <h5 className="font-medium text-foreground truncate">
+                                      {item.productName}
+                                    </h5>
+                                    {isStockLow && (
+                                      <Badge variant="destructive" className="text-xs">
+                                        <AlertCircle className="h-3 w-3 mr-1" />
+                                        库存低
+                                      </Badge>
+                                    )}
+                                    {isSellingFast && (
+                                      <Badge variant="default" className="text-xs bg-orange-100 text-orange-800 hover:bg-orange-100">
+                                        <Zap className="h-3 w-3 mr-1" />
+                                        卖得快
+                                      </Badge>
+                                    )}
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-x-4 gap-y-1 mt-2 text-xs">
+                                    <div className="flex justify-between">
+                                      <span className="text-muted-foreground">当前库存</span>
+                                      <span className={isStockLow ? 'text-destructive font-medium' : 'font-medium'}>
+                                        {item.currentStock} 件
+                                      </span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                      <span className="text-muted-foreground">日均销量</span>
+                                      <span className="font-medium">
+                                        {item.avgDailySales.toFixed(1)} 件
+                                      </span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                      <span className="text-muted-foreground">预计可售</span>
+                                      <span className={`font-medium ${item.estimatedDaysLeft <= 3 ? 'text-destructive' : item.estimatedDaysLeft <= 7 ? 'text-orange-600' : 'text-green-600'}`}>
+                                        {item.estimatedDaysLeft >= 999 ? '∞' : `${item.estimatedDaysLeft} 天`}
+                                      </span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                      <span className="text-muted-foreground">建议进货</span>
+                                      <span className="text-success font-medium">
+                                        {item.suggestedQuantity} 件
+                                      </span>
+                                    </div>
+                                    <div className="flex justify-between col-span-2">
+                                      <span className="text-muted-foreground">建议进货金额</span>
+                                      <span className="text-success font-medium">
+                                        ¥{item.suggestedPurchaseAmount.toFixed(2)}
+                                      </span>
+                                    </div>
+                                  </div>
                                 </div>
+                                <Button
+                                  variant="default"
+                                  size="sm"
+                                  onClick={() =>
+                                    handleOpenDialog('quickStock', {
+                                      selectedRestockItem: item,
+                                      supplierId: group.supplierId,
+                                    })
+                                  }
+                                >
+                                  <ArrowDownToLine className="h-4 w-4 mr-1" />
+                                  入库
+                                </Button>
                               </div>
-                              <Button
-                                variant="default"
-                                size="sm"
-                                onClick={() =>
-                                  handleOpenDialog('quickStock', {
-                                    selectedRestockItem: item,
-                                    supplierId: group.supplierId,
-                                  })
-                                }
-                              >
-                                <ArrowDownToLine className="h-4 w-4 mr-1" />
-                                入库
-                              </Button>
                             </div>
-                          </div>
-                        ))}
+                          );
+                        })}
+                      </div>
+                      <div className="mt-3 pt-3 border-t border-warning/20 flex items-center justify-between">
+                        <span className="text-sm text-muted-foreground flex items-center gap-1">
+                          <Calculator className="h-4 w-4" />
+                          该供应商建议进货金额
+                        </span>
+                        <span className="text-lg font-bold text-success">
+                          ¥{group.totalSuggestedAmount.toFixed(2)}
+                        </span>
                       </div>
                     </AccordionContent>
                   </AccordionItem>

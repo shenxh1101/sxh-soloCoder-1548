@@ -242,15 +242,24 @@ export default function Statistics() {
   }, [salesTrend]);
 
   const currentMonthProfit = useMemo(() => {
-    return monthlyProfit.find((m) => m.month === selectedMonth) || {
+    const fromMonthly = monthlyProfit.find((m) => m.month === selectedMonth);
+    if (fromMonthly) return fromMonthly;
+
+    const totalRevenue = productProfit.reduce((sum, p) => sum + p.revenue, 0);
+    const totalCost = productProfit.reduce((sum, p) => sum + p.cost, 0);
+    const totalWasteLoss = productProfit.reduce((sum, p) => sum + p.wasteLoss, 0);
+    const totalGrossProfit = productProfit.reduce((sum, p) => sum + p.grossProfit, 0);
+    const totalGrossMargin = totalRevenue > 0 ? (totalGrossProfit / totalRevenue) * 100 : 0;
+
+    return {
       month: selectedMonth,
-      revenue: 0,
-      cost: 0,
-      wasteLoss: 0,
-      grossProfit: 0,
-      grossMargin: 0,
+      revenue: totalRevenue,
+      cost: totalCost,
+      wasteLoss: totalWasteLoss,
+      grossProfit: totalGrossProfit,
+      grossMargin: totalGrossMargin,
     };
-  }, [monthlyProfit, selectedMonth]);
+  }, [monthlyProfit, productProfit, selectedMonth]);
 
   const lowMarginProducts = useMemo(() => {
     return productProfit

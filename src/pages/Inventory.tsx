@@ -82,6 +82,7 @@ export default function Inventory() {
     addBatch,
     addSale,
     markBatchAsWaste,
+    getInventoryLogs,
   } = useStore();
 
   const [selectedProduct, setSelectedProduct] = useState<string>('all');
@@ -105,6 +106,22 @@ export default function Inventory() {
 
   const [detailDialogOpen, setDetailDialogOpen] = useState(false);
   const [selectedBatch, setSelectedBatch] = useState<BatchWithDetails | null>(null);
+
+  const [logProduct, setLogProduct] = useState<string>('all');
+  const [logType, setLogType] = useState<string>('all');
+  const [logStartDate, setLogStartDate] = useState<string>('');
+  const [logEndDate, setLogEndDate] = useState<string>('');
+  const [logDetailOpen, setLogDetailOpen] = useState(false);
+  const [selectedLog, setSelectedLog] = useState<InventoryLog | null>(null);
+
+  const inventoryLogs = useMemo(() => {
+    return getInventoryLogs({
+      productId: logProduct,
+      type: logType,
+      startDate: logStartDate || undefined,
+      endDate: logEndDate || undefined,
+    });
+  }, [getInventoryLogs, logProduct, logType, logStartDate, logEndDate]);
 
   const enrichedBatches = useMemo<BatchWithDetails[]>(() => {
     return batches
@@ -299,7 +316,7 @@ export default function Inventory() {
       </div>
 
       <Tabs defaultValue="list" className="w-full">
-        <TabsList className="grid w-full max-w-md grid-cols-3">
+        <TabsList className="grid w-full max-w-lg grid-cols-4">
           <TabsTrigger value="list" className="flex items-center gap-2">
             <Package className="h-4 w-4" />
             库存列表
@@ -311,6 +328,10 @@ export default function Inventory() {
           <TabsTrigger value="outbound" className="flex items-center gap-2">
             <ArrowUpCircle className="h-4 w-4" />
             快速出库
+          </TabsTrigger>
+          <TabsTrigger value="logs" className="flex items-center gap-2">
+            <History className="h-4 w-4" />
+            库存流水
           </TabsTrigger>
         </TabsList>
 
@@ -748,6 +769,192 @@ export default function Inventory() {
             </CardFooter>
           </Card>
         </TabsContent>
+
+        <TabsContent value="logs" className="mt-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>库存流水记录</CardTitle>
+              <CardDescription>
+                查看所有库存变动记录，包括入库、销售、报损等操作
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex flex-wrap gap-4">
+                <div className="flex flex-col gap-2">
+                  <Label>商品筛选</Label>
+                  <Select value={logProduct} onValueChange={setLogProduct}>
+                    <SelectTrigger className="w-[200px]">
+                      <SelectValue placeholder="全部商品" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">全部商品</SelectItem>
+                      {products.map((product) => (
+                        <SelectItem key={product.id} value={product.id}>
+                          {product.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex flex-col gap-2">
+                  <Label>变动类型</Label>
+                  <Select value={logType} onValueChange={setLogType}>
+                    <SelectTrigger className="w-[160px]">
+                      <SelectValue placeholder="全部类型" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">全部类型</SelectItem>
+                      <SelectItem value="inbound">入库</SelectItem>
+                      <SelectItem value="sale">销售出库</SelectItem>
+                      <SelectItem value="waste">报损</SelectItem>
+                      <SelectItem value="delete">删除商品</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex flex-col gap-2">
+                  <Label>开始日期</Label>
+                  <div className="relative">
+                    <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      type="date"
+                      value={logStartDate}
+                      onChange={(e) => setLogStartDate(e.target.value)}
+                      className="pl-10 w-[160px]"
+                    />
+                  </div>
+                </div>
+                <div className="flex flex-col gap-2">
+                  <Label>结束日期</Label>
+                  <div className="relative">
+                    <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      type="date"
+                      value={logEndDate}
+                      onChange={(e) => setLogEndDate(e.target.value)}
+                      className="pl-10 w-[160px]"
+                    />
+                  </div>
+                </div>
+                <div className="flex items-end gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setLogProduct('all');
+                      setLogType('all');
+                      setLogStartDate('');
+                      setLogEndDate('');
+                    }}
+                  >
+                    重置筛选
+                  </Button>
+                </div>
+              </div>
+
+              <div className="rounded-md border overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>时间</TableHead>
+                      <TableHead>商品名称</TableHead>
+                      <TableHead>变动类型</TableHead>
+                      <TableHead className="text-right">变动数量</TableHead>
+                      <TableHead className="text-right">变动前库存</TableHead>
+                      <TableHead className="text-right">变动后库存</TableHead>
+                      <TableHead className="text-right">金额</TableHead>
+                      <TableHead>备注</TableHead>
+                      <TableHead className="text-right">操作</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {inventoryLogs.length === 0 ? (
+                      <TableRow>
+                        <TableCell
+                          colSpan={9}
+                          className="text-center py-8 text-muted-foreground"
+                        >
+                          暂无库存流水记录
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      inventoryLogs.slice(0, 50).map((log) => (
+                        <TableRow key={log.id}>
+                          <TableCell className="text-sm text-muted-foreground">
+                            {formatDateTime(log.createdAt)}
+                          </TableCell>
+                          <TableCell className="font-medium">
+                            {log.productName}
+                          </TableCell>
+                          <TableCell>
+                            <Badge
+                              variant={
+                                log.type === 'inbound'
+                                  ? 'default'
+                                  : log.type === 'sale'
+                                  ? 'secondary'
+                                  : log.type === 'waste'
+                                  ? 'destructive'
+                                  : 'outline'
+                              }
+                              className={
+                                log.type === 'inbound'
+                                  ? 'bg-green-100 text-green-800 hover:bg-green-100'
+                                  : ''
+                              }
+                            >
+                              {log.typeName}
+                            </Badge>
+                          </TableCell>
+                          <TableCell
+                            className={`text-right font-medium ${
+                              log.quantityChange > 0
+                                ? 'text-green-600'
+                                : 'text-red-600'
+                            }`}
+                          >
+                            {log.quantityChange > 0 ? '+' : ''}
+                            {log.quantityChange}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {log.stockBefore}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {log.stockAfter}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {log.totalAmount !== undefined
+                              ? `¥${log.totalAmount.toFixed(2)}`
+                              : '-'}
+                          </TableCell>
+                          <TableCell className="text-sm text-muted-foreground">
+                            {log.reason || '-'}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                setSelectedLog(log);
+                                setLogDetailOpen(true);
+                              }}
+                            >
+                              <Eye className="h-4 w-4 mr-1" />
+                              详情
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+              {inventoryLogs.length > 50 && (
+                <p className="text-sm text-muted-foreground text-center">
+                  共 {inventoryLogs.length} 条记录，仅显示最近 50 条
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
       </Tabs>
 
       <Dialog open={detailDialogOpen} onOpenChange={setDetailDialogOpen}>
@@ -811,6 +1018,123 @@ export default function Inventory() {
             <Button
               variant="outline"
               onClick={() => setDetailDialogOpen(false)}
+            >
+              关闭
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={logDetailOpen} onOpenChange={setLogDetailOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>库存流水详情</DialogTitle>
+            <DialogDescription>
+              查看库存变动的详细信息
+            </DialogDescription>
+          </DialogHeader>
+          {selectedLog && (
+            <div className="space-y-6">
+              <div className="flex items-center gap-4 p-4 bg-muted/30 rounded-lg">
+                <div
+                  className={`w-12 h-12 rounded-full flex items-center justify-center ${
+                    selectedLog.quantityChange > 0
+                      ? 'bg-green-100'
+                      : 'bg-red-100'
+                  }`}
+                >
+                  {selectedLog.type === 'inbound' ? (
+                    <ArrowDownCircle className="w-6 h-6 text-green-600" />
+                  ) : selectedLog.type === 'sale' ? (
+                    <ArrowUpCircle className="w-6 h-6 text-orange-600" />
+                  ) : selectedLog.type === 'waste' ? (
+                    <AlertCircle className="w-6 h-6 text-red-600" />
+                  ) : (
+                    <XCircle className="w-6 h-6 text-gray-600" />
+                  )}
+                </div>
+                <div>
+                  <h3 className="text-lg font-semibold">
+                    {selectedLog.productName}
+                  </h3>
+                  <p className="text-sm text-muted-foreground">
+                    {selectedLog.typeName}
+                  </p>
+                </div>
+                <Badge
+                  variant={
+                    selectedLog.quantityChange > 0 ? 'default' : 'destructive'
+                  }
+                  className="ml-auto text-lg px-3 py-1"
+                >
+                  {selectedLog.quantityChange > 0 ? '+' : ''}
+                  {selectedLog.quantityChange} 件
+                </Badge>
+              </div>
+
+              <div className="grid grid-cols-3 gap-4">
+                <div className="text-center p-4 bg-gray-50 rounded-lg">
+                  <p className="text-sm text-muted-foreground mb-1">变动前库存</p>
+                  <p className="text-2xl font-bold text-gray-700">
+                    {selectedLog.stockBefore}
+                  </p>
+                </div>
+                <div className="flex items-center justify-center">
+                  <ArrowRight className="w-6 h-6 text-gray-400" />
+                </div>
+                <div className="text-center p-4 bg-green-50 rounded-lg">
+                  <p className="text-sm text-muted-foreground mb-1">变动后库存</p>
+                  <p className="text-2xl font-bold text-green-600">
+                    {selectedLog.stockAfter}
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <p className="text-sm text-muted-foreground">变动时间</p>
+                  <p className="font-medium flex items-center gap-2">
+                    <Clock className="w-4 h-4" />
+                    {formatDateTime(selectedLog.createdAt)}
+                  </p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-sm text-muted-foreground">变动类型</p>
+                  <Badge variant="outline" className="text-base px-3 py-1">
+                    {selectedLog.typeName}
+                  </Badge>
+                </div>
+                {selectedLog.totalAmount !== undefined && (
+                  <div className="space-y-1">
+                    <p className="text-sm text-muted-foreground">
+                      {selectedLog.type === 'inbound' ? '进货金额' : '销售金额'}
+                    </p>
+                    <p className="font-medium text-lg">
+                      ¥{selectedLog.totalAmount.toFixed(2)}
+                    </p>
+                  </div>
+                )}
+                {selectedLog.unitPrice !== undefined && (
+                  <div className="space-y-1">
+                    <p className="text-sm text-muted-foreground">单价</p>
+                    <p className="font-medium">
+                      ¥{selectedLog.unitPrice.toFixed(2)}
+                    </p>
+                  </div>
+                )}
+                {selectedLog.reason && (
+                  <div className="space-y-1 col-span-2">
+                    <p className="text-sm text-muted-foreground">备注</p>
+                    <p className="font-medium">{selectedLog.reason}</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setLogDetailOpen(false)}
             >
               关闭
             </Button>
