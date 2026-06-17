@@ -7,10 +7,17 @@ import {
   ArrowUpCircle,
   Calendar,
   TrendingUp,
+  History,
+  Clock,
+  ArrowRight,
+  Eye,
+  AlertCircle,
+  CheckCircle2,
+  XCircle,
 } from 'lucide-react';
 import { useStore } from '@/store';
 import { calculateExpiryDate } from '@/utils/expiryUtils';
-import { getTodayString } from '@/utils/dateUtils';
+import { getTodayString, formatDateTime } from '@/utils/dateUtils';
 import {
   getExpiryStatus,
   getExpiryStatusText,
@@ -57,7 +64,7 @@ import {
   TabsList,
   TabsTrigger,
 } from '@/components/ui/tabs';
-import type { InventoryBatch, ExpiryStatus } from '@/types';
+import type { InventoryBatch, ExpiryStatus, InventoryLog } from '@/types';
 
 interface BatchWithDetails extends InventoryBatch {
   productName: string;

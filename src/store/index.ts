@@ -859,4 +859,232 @@ export const useStore = create<StoreState>((set, get) => ({
       };
     });
   },
+
+  getInventoryLogs: (filter) => {
+    const { inventoryLogs, products } = get();
+    let logs = [...inventoryLogs];
+
+    if (filter?.productId && filter.productId !== 'all') {
+      logs = logs.filter((l) => l.productId === filter.productId);
+    }
+
+    if (filter?.type && filter.type !== 'all') {
+      logs = logs.filter((l) => l.type === filter.type);
+    }
+
+    if (filter?.startDate) {
+      logs = logs.filter((l) => l.createdAt.slice(0, 10) >= filter.startDate!);
+    }
+
+    if (filter?.endDate) {
+      logs = logs.filter((l) => l.createdAt.slice(0, 10) <= filter.endDate!);
+    }
+
+    return logs.sort((a, b) =>
+      new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+  },
+
+  getMonthlyProfit: (months = 6) => {
+    const { sales, batches, waste } = get();
+    const result: ProfitMonthly[] = [];
+    const today = new Date();
+
+    for (let i = months - 1; i >= 0; i--) {
+      const date = new Date(today.getFullYear(), today.getMonth() - i, 1);
+      const year = date.getFullYear();
+      const month = date.getMonth() + 1;
+      const monthStr = `${year}-${String(month).padStart(2, '0')}`;
+      const monthStart = new Date(year, month - 1, 1);
+      const monthEnd = new Date(year, month, 0);
+      const startStr = monthStart.toISOString().split('T')[0];
+      const endStr = monthEnd.toISOString().split('T')[0];
+
+      const monthSales = sales.filter((s) => s.saleDate >= startStr && s.saleDate <= endStr);
+      const revenue = monthSales.reduce((sum, s) => sum + s.totalAmount, 0);
+
+      const monthBatches = batches.filter((b) => b.purchaseDate >= startStr && b.purchaseDate <= endStr);
+      const cost = monthBatches.reduce((sum, b) => sum + b.quantity * b.purchasePrice, 0);
+
+      const monthWaste = waste.filter((w) => w.wasteDate >= startStr && w.wasteDate <= endStr);
+      const wasteLoss = monthWaste.reduce((sum, w) => sum + w.lossAmount, 0);
+
+      const grossProfit = revenue - cost - wasteLoss;
+      const grossMargin = revenue > 0 ? (grossProfit / revenue) * 100 : 0;
+
+      result.push({
+        month: monthStr,
+        revenue,
+        cost,
+        wasteLoss,
+        grossProfit,
+        grossMargin,
+      });
+    }
+
+    return result;
+  },
+
+  getProductProfit: (month) => {
+    const { sales, products, categories, batches, waste } = get();
+    let start: string, end: string;
+
+    if (month) {
+      const [year, monthNum] = month.split('-').map(Number);
+      const monthStart = new Date(year, monthNum - 1, 1);
+      const monthEnd = new Date(year, monthNum, 0);
+      start = monthStart.toISOString().split('T')[0];
+      end = monthEnd.toISOString().split('T')[0];
+    } else {
+      const range = getCurrentMonthRange();
+      start = range.start;
+      end = range.end;
+    }
+
+    const monthSales = sales.filter((s) => s.saleDate >= start && s.saleDate <= end);
+    const monthWaste = waste.filter((w) => w.wasteDate >= start && w.wasteDate <= end);
+
+    const productSales = new Map<string, { quantity: number; revenue: number }>();
+    monthSales.forEach((sale) => {
+      const current = productSales.get(sale.productId) || { quantity: 0, revenue: 0 };
+      productSales.set(sale.productId, {
+        quantity: current.quantity + sale.quantity,
+        revenue: current.revenue + sale.totalAmount,
+      });
+    });
+
+    const productWaste = new Map<string, { lossAmount: number }>();
+    monthWaste.forEach((w) => {
+      const current = productWaste.get(w.productId) || { lossAmount: 0 };
+      productWaste.set(w.productId, { lossAmount: current.lossAmount + w.lossAmount });
+    });
+
+    const productCostMap = new Map<string, number>();
+    products.forEach((p) => {
+      const productBatches = batches.filter((b) => b.productId === p.id);
+      if (productBatches.length > 0) {
+        const latestBatch = productBatches.sort(
+          (a, b) => new Date(b.purchaseDate).getTime() - new Date(a.purchaseDate).getTime()
+        )[0];
+        productCostMap.set(p.id, latestBatch.purchasePrice);
+      }
+    });
+
+    return products
+      .map((product) => {
+        const salesData = productSales.get(product.id) || { quantity: 0, revenue: 0 };
+        const wasteData = productWaste.get(product.id) || { lossAmount: 0 };
+        const unitCost = productCostMap.get(product.id) || 0;
+        const category = categories.find((c) => c.id === product.categoryId);
+
+        if (salesData.quantity === 0 && wasteData.lossAmount === 0) return null;
+
+        const cost = salesData.quantity * unitCost;
+        const grossProfit = salesData.revenue - cost - wasteData.lossAmount;
+        const grossMargin = salesData.revenue > 0 ? (grossProfit / salesData.revenue) * 100 : 0;
+
+        return {
+          productId: product.id,
+          productName: product.name,
+          categoryName: category?.name || '未知',
+          quantity: salesData.quantity,
+          revenue: salesData.revenue,
+          cost,
+          wasteLoss: wasteData.lossAmount,
+          grossProfit,
+          grossMargin,
+        };
+      })
+      .filter((item): item is ProfitProduct => item !== null)
+      .sort((a, b) => b.revenue - a.revenue);
+  },
+
+  getSmartRestockList: () => {
+    const { products, suppliers, sales, batches } = get();
+    const today = getTodayString();
+    const thirtyDaysAgo = new Date(today);
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const startStr = thirtyDaysAgo.toISOString().split('T')[0];
+
+    const recentSales = sales.filter((s) => s.saleDate >= startStr && s.saleDate <= today);
+    const productSalesMap = new Map<string, number>();
+
+    recentSales.forEach((sale) => {
+      const current = productSalesMap.get(sale.productId) || 0;
+      productSalesMap.set(sale.productId, current + sale.quantity);
+    });
+
+    const productCostMap = new Map<string, number>();
+    products.forEach((p) => {
+      const supplier = suppliers.find((s) => s.id === p.supplierId);
+      if (supplier?.lastPrice) {
+        productCostMap.set(p.id, supplier.lastPrice);
+      } else {
+        const productBatches = batches.filter((b) => b.productId === p.id);
+        if (productBatches.length > 0) {
+          const latestBatch = productBatches.sort(
+            (a, b) => new Date(b.purchaseDate).getTime() - new Date(a.purchaseDate).getTime()
+          )[0];
+          productCostMap.set(p.id, latestBatch.purchasePrice);
+        }
+      }
+    });
+
+    const restockProducts = products.filter((p) => {
+      const totalSales = productSalesMap.get(p.id) || 0;
+      const avgDailySales = totalSales / 30;
+      const estimatedDaysLeft = avgDailySales > 0 ? p.currentStock / avgDailySales : Infinity;
+
+      return (
+        p.currentStock <= p.stockThreshold ||
+        (avgDailySales > 0 && estimatedDaysLeft <= 7)
+      );
+    });
+
+    const groups = new Map<string, SmartRestockGroup>();
+
+    restockProducts.forEach((product) => {
+      const supplier = suppliers.find((s) => s.id === product.supplierId);
+      if (!supplier) return;
+
+      const totalSales = productSalesMap.get(product.id) || 0;
+      const avgDailySales = totalSales / 30;
+      const estimatedDaysLeft = avgDailySales > 0 ? product.currentStock / avgDailySales : 999;
+      const lastPurchasePrice = productCostMap.get(product.id) || product.sellingPrice * 0.6;
+
+      const suggestedQuantity = Math.max(
+        product.stockThreshold * 2 - product.currentStock,
+        product.stockThreshold,
+        Math.ceil(avgDailySales * 14) - product.currentStock
+      );
+      const suggestedPurchaseAmount = suggestedQuantity * lastPurchasePrice;
+
+      if (!groups.has(supplier.id)) {
+        groups.set(supplier.id, {
+          supplierId: supplier.id,
+          supplierName: supplier.name,
+          supplierPhone: supplier.phone,
+          items: [],
+          totalSuggestedAmount: 0,
+        });
+      }
+
+      const group = groups.get(supplier.id)!;
+      group.items.push({
+        productId: product.id,
+        productName: product.name,
+        currentStock: product.currentStock,
+        stockThreshold: product.stockThreshold,
+        suggestedQuantity: Math.max(suggestedQuantity, 0),
+        sellingPrice: product.sellingPrice,
+        avgDailySales: Math.round(avgDailySales * 100) / 100,
+        estimatedDaysLeft: Math.round(estimatedDaysLeft * 10) / 10,
+        suggestedPurchaseAmount: Math.round(suggestedPurchaseAmount * 100) / 100,
+        lastPurchasePrice,
+      });
+      group.totalSuggestedAmount += Math.round(suggestedPurchaseAmount * 100) / 100;
+    });
+
+    return Array.from(groups.values());
+  },
 }));

@@ -167,6 +167,7 @@ export interface InventoryLog {
   reason?: string;
   batchId?: string;
   supplierId?: string;
+  promotionId?: string;
   operator?: string;
   createdAt: string;
 }

@@ -40,10 +40,14 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   TrendingUp,
+  TrendingDown,
   AlertTriangle,
   Trophy,
   Medal,
   Package,
+  DollarSign,
+  BarChart3,
+  AlertCircle,
 } from 'lucide-react';
 import { useStore } from '@/store';
 import { formatDateChinese } from '@/utils/dateUtils';
@@ -134,6 +138,8 @@ export default function Statistics() {
     getWasteStatistics,
     getWasteByReason,
     getDailySalesTrend,
+    getMonthlyProfit,
+    getProductProfit,
     sales,
     waste,
   } = useStore();
@@ -152,6 +158,8 @@ export default function Statistics() {
   const wasteStats = useMemo(() => getWasteStatistics(selectedMonth), [getWasteStatistics, selectedMonth]);
   const wasteByReason = useMemo(() => getWasteByReason(selectedMonth), [getWasteByReason, selectedMonth]);
   const salesTrend = useMemo(() => getDailySalesTrend(30, selectedMonth), [getDailySalesTrend, selectedMonth]);
+  const monthlyProfit = useMemo(() => getMonthlyProfit(6), [getMonthlyProfit]);
+  const productProfit = useMemo(() => getProductProfit(selectedMonth), [getProductProfit, selectedMonth]);
 
   const monthOptions = useMemo(() => {
     const options = [];
@@ -232,6 +240,23 @@ export default function Statistics() {
     const min = revenues.length > 0 ? Math.min(...revenues) : 0;
     return { avg, max, min };
   }, [salesTrend]);
+
+  const currentMonthProfit = useMemo(() => {
+    return monthlyProfit.find((m) => m.month === selectedMonth) || {
+      month: selectedMonth,
+      revenue: 0,
+      cost: 0,
+      wasteLoss: 0,
+      grossProfit: 0,
+      grossMargin: 0,
+    };
+  }, [monthlyProfit, selectedMonth]);
+
+  const lowMarginProducts = useMemo(() => {
+    return productProfit
+      .filter((p) => p.quantity > 0 && p.grossMargin < 15)
+      .sort((a, b) => a.grossMargin - b.grossMargin);
+  }, [productProfit]);
 
   const chartTooltipStyle = {
     backgroundColor: '#ffffff',
@@ -324,6 +349,7 @@ export default function Statistics() {
       <Tabs defaultValue="top-selling" className="w-full">
         <TabsList>
           <TabsTrigger value="top-selling">热销排行</TabsTrigger>
+          <TabsTrigger value="profit-analysis">利润分析</TabsTrigger>
           <TabsTrigger value="waste-analysis">浪费分析</TabsTrigger>
           <TabsTrigger value="sales-trend">销售趋势</TabsTrigger>
         </TabsList>
@@ -407,6 +433,238 @@ export default function Statistics() {
                       </TableCell>
                       <TableCell className="text-right font-medium text-orange-600">
                         ¥{item.revenue.toFixed(2)}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="profit-analysis" className="space-y-6">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <Card className="bg-gradient-to-br from-orange-500 to-orange-600 text-white border-0">
+              <CardHeader className="pb-2">
+                <CardDescription className="text-orange-100 text-xs">
+                  <div className="flex items-center gap-1">
+                    <DollarSign className="w-4 h-4" />
+                    销售额
+                  </div>
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">
+                  ¥{currentMonthProfit.revenue.toFixed(0)}
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-gradient-to-br from-blue-500 to-blue-600 text-white border-0">
+              <CardHeader className="pb-2">
+                <CardDescription className="text-blue-100 text-xs">
+                  <div className="flex items-center gap-1">
+                    <Package className="w-4 h-4" />
+                    进货成本
+                  </div>
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">
+                  ¥{currentMonthProfit.cost.toFixed(0)}
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-gradient-to-br from-green-500 to-green-600 text-white border-0">
+              <CardHeader className="pb-2">
+                <CardDescription className="text-green-100 text-xs">
+                  <div className="flex items-center gap-1">
+                    <TrendingUp className="w-4 h-4" />
+                    毛利
+                  </div>
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">
+                  ¥{currentMonthProfit.grossProfit.toFixed(0)}
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-gradient-to-br from-purple-500 to-purple-600 text-white border-0">
+              <CardHeader className="pb-2">
+                <CardDescription className="text-purple-100 text-xs">
+                  <div className="flex items-center gap-1">
+                    <BarChart3 className="w-4 h-4" />
+                    毛利率
+                  </div>
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">
+                  {currentMonthProfit.grossMargin.toFixed(1)}%
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>近6个月利润趋势</CardTitle>
+              <CardDescription>
+                销售额、成本、毛利变化趋势
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="h-80">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart
+                    data={monthlyProfit}
+                    margin={{ top: 20, right: 30, left: 20, bottom: 20 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                    <XAxis
+                      dataKey="month"
+                      tick={{ fontSize: 12 }}
+                      tickFormatter={(value) => {
+                        const [, m] = value.split('-');
+                        return `${parseInt(m)}月`;
+                      }}
+                    />
+                    <YAxis />
+                    <Tooltip
+                      contentStyle={chartTooltipStyle}
+                      labelFormatter={(value) => formatMonthLabel(value)}
+                      formatter={(value: number) => [`¥${value.toFixed(0)}`, '']}
+                    />
+                    <Legend />
+                    <Line
+                      type="monotone"
+                      dataKey="revenue"
+                      name="销售额"
+                      stroke="#F97316"
+                      strokeWidth={3}
+                      dot={{ fill: '#F97316', r: 4 }}
+                      activeDot={{ r: 6, fill: '#F97316' }}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="cost"
+                      name="成本"
+                      stroke="#3B82F6"
+                      strokeWidth={2}
+                      strokeDasharray="5 5"
+                      dot={{ fill: '#3B82F6', r: 4 }}
+                      activeDot={{ r: 6, fill: '#3B82F6' }}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="grossProfit"
+                      name="毛利"
+                      stroke="#10B981"
+                      strokeWidth={3}
+                      dot={{ fill: '#10B981', r: 4 }}
+                      activeDot={{ r: 6, fill: '#10B981' }}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </CardContent>
+          </Card>
+
+          {lowMarginProducts.length > 0 && (
+            <Card className="border-yellow-200 bg-yellow-50">
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2 text-yellow-800">
+                  <AlertCircle className="h-5 w-5 text-yellow-600" />
+                  低毛利商品预警
+                </CardTitle>
+                <CardDescription className="text-yellow-700">
+                  以下商品销量较高但毛利率低于15%，建议关注
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="grid gap-3">
+                  {lowMarginProducts.slice(0, 5).map((item) => (
+                    <div
+                      key={item.productId}
+                      className="flex items-center justify-between p-3 bg-white rounded-lg border border-yellow-200"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-full bg-yellow-100 flex items-center justify-center">
+                          <AlertCircle className="w-5 h-5 text-yellow-600" />
+                        </div>
+                        <div>
+                          <p className="font-medium text-gray-900">{item.productName}</p>
+                          <p className="text-sm text-gray-500">{item.categoryName} · 销量 {item.quantity} 件</p>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <p className={`font-bold text-lg ${item.grossMargin < 5 ? 'text-red-600' : 'text-yellow-600'}`}>
+                          {item.grossMargin.toFixed(1)}%
+                        </p>
+                        <p className="text-sm text-gray-500">毛利 ¥{item.grossProfit.toFixed(0)}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          <Card>
+            <CardHeader>
+              <CardTitle>{formatMonthLabel(selectedMonth)} 商品利润明细</CardTitle>
+              <CardDescription>
+                按销售额排序，可查看各商品的盈利情况
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>商品名称</TableHead>
+                    <TableHead>分类</TableHead>
+                    <TableHead className="text-right">销量</TableHead>
+                    <TableHead className="text-right">销售额</TableHead>
+                    <TableHead className="text-right">成本</TableHead>
+                    <TableHead className="text-right">浪费损失</TableHead>
+                    <TableHead className="text-right">毛利</TableHead>
+                    <TableHead className="text-right">毛利率</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {productProfit.map((item) => (
+                    <TableRow key={item.productId}>
+                      <TableCell className="font-medium">
+                        {item.productName}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="secondary">{item.categoryName}</Badge>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {item.quantity} 件
+                      </TableCell>
+                      <TableCell className="text-right text-orange-600 font-medium">
+                        ¥{item.revenue.toFixed(2)}
+                      </TableCell>
+                      <TableCell className="text-right text-blue-600">
+                        ¥{item.cost.toFixed(2)}
+                      </TableCell>
+                      <TableCell className="text-right text-red-600">
+                        ¥{item.wasteLoss.toFixed(2)}
+                      </TableCell>
+                      <TableCell className={`text-right font-bold ${item.grossProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        ¥{item.grossProfit.toFixed(2)}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Badge
+                          variant={item.grossMargin >= 20 ? 'default' : item.grossMargin >= 10 ? 'secondary' : 'destructive'}
+                          className={item.grossMargin >= 20 ? 'bg-green-100 text-green-800 hover:bg-green-100' : ''}
+                        >
+                          {item.grossMargin.toFixed(1)}%
+                        </Badge>
                       </TableCell>
                     </TableRow>
                   ))}
