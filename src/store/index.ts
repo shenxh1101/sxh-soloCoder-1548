@@ -80,9 +80,10 @@ interface StoreState {
   getExpiringBatches: (days?: number) => BatchWithProduct[];
   getExpiredBatches: () => BatchWithProduct[];
   getRestockList: () => RestockGroup[];
-  getTopSellingProducts: (limit?: number) => TopSellingItem[];
-  getWasteStatistics: () => WasteStatItem[];
-  getDailySalesTrend: (days?: number) => DailySalesTrend[];
+  getTopSellingProducts: (limit?: number, month?: string) => TopSellingItem[];
+  getWasteStatistics: (month?: string, reason?: string) => WasteStatItem[];
+  getWasteByReason: (month?: string) => WasteByReason[];
+  getDailySalesTrend: (days?: number, month?: string) => DailySalesTrend[];
   getPromotionAnalysis: (promotionId: string) => PromotionAnalysis[];
 }
 
@@ -216,9 +217,30 @@ export const useStore = create<StoreState>((set, get) => ({
   },
 
   deleteProduct: (id) => {
-    const products = get().products.filter((p) => p.id !== id);
-    set({ products });
-    saveToStorage('products', products);
+    const { products, batches, sales, waste, promotions } = get();
+
+    const filteredProducts = products.filter((p) => p.id !== id);
+    const filteredBatches = batches.filter((b) => b.productId !== id);
+    const filteredSales = sales.filter((s) => s.productId !== id);
+    const filteredWaste = waste.filter((w) => w.productId !== id);
+    const filteredPromotions = promotions.map((p) => ({
+      ...p,
+      productIds: p.productIds.filter((pid) => pid !== id),
+    }));
+
+    set({
+      products: filteredProducts,
+      batches: filteredBatches,
+      sales: filteredSales,
+      waste: filteredWaste,
+      promotions: filteredPromotions,
+    });
+
+    saveToStorage('products', filteredProducts);
+    saveToStorage('batches', filteredBatches);
+    saveToStorage('sales', filteredSales);
+    saveToStorage('waste', filteredWaste);
+    saveToStorage('promotions', filteredPromotions);
   },
 
   addBatch: (batch) => {
@@ -289,6 +311,14 @@ export const useStore = create<StoreState>((set, get) => ({
     const { products, batches } = get();
     const product = products.find((p) => p.id === sale.productId);
     if (!product) return;
+
+    const availableStock = batches
+      .filter((b) => b.productId === sale.productId && b.remainingQuantity > 0)
+      .reduce((sum, b) => sum + b.remainingQuantity, 0);
+
+    if (sale.quantity > availableStock) {
+      throw new Error(`库存不足！当前可用库存仅 ${availableStock} 件`);
+    }
 
     let remainingQty = sale.quantity;
     const productBatches = batches
@@ -479,11 +509,23 @@ export const useStore = create<StoreState>((set, get) => ({
     return Array.from(groups.values());
   },
 
-  getTopSellingProducts: (limit = 10) => {
+  getTopSellingProducts: (limit = 10, month) => {
     const { sales, products, categories } = get();
-    const { start } = getCurrentMonthRange();
+    let start: string, end: string;
 
-    const monthSales = sales.filter((s) => s.saleDate >= start);
+    if (month) {
+      const [year, monthNum] = month.split('-').map(Number);
+      const monthStart = new Date(year, monthNum - 1, 1);
+      const monthEnd = new Date(year, monthNum, 0);
+      start = monthStart.toISOString().split('T')[0];
+      end = monthEnd.toISOString().split('T')[0];
+    } else {
+      const range = getCurrentMonthRange();
+      start = range.start;
+      end = range.end;
+    }
+
+    const monthSales = sales.filter((s) => s.saleDate >= start && s.saleDate <= end);
 
     const productSales = new Map<string, { quantity: number; revenue: number }>();
 
@@ -511,56 +553,154 @@ export const useStore = create<StoreState>((set, get) => ({
       .slice(0, limit);
   },
 
-  getWasteStatistics: () => {
+  getWasteStatistics: (month, reason) => {
     const { waste, products, categories } = get();
-    const { start } = getCurrentMonthRange();
+    let start: string, end: string;
 
-    const monthWaste = waste.filter((w) => w.wasteDate >= start);
+    if (month) {
+      const [year, monthNum] = month.split('-').map(Number);
+      const monthStart = new Date(year, monthNum - 1, 1);
+      const monthEnd = new Date(year, monthNum, 0);
+      start = monthStart.toISOString().split('T')[0];
+      end = monthEnd.toISOString().split('T')[0];
+    } else {
+      const range = getCurrentMonthRange();
+      start = range.start;
+      end = range.end;
+    }
 
-    const productWaste = new Map<string, { quantity: number; lossAmount: number }>();
+    let monthWaste = waste.filter((w) => w.wasteDate >= start && w.wasteDate <= end);
+
+    if (reason) {
+      monthWaste = monthWaste.filter((w) => w.reason === reason);
+    }
+
+    const productWaste = new Map<string, { quantity: number; lossAmount: number; reason: string }>();
 
     monthWaste.forEach((w) => {
-      const current = productWaste.get(w.productId) || { quantity: 0, lossAmount: 0 };
+      const current = productWaste.get(w.productId) || { quantity: 0, lossAmount: 0, reason: w.reason };
       productWaste.set(w.productId, {
         quantity: current.quantity + w.quantity,
         lossAmount: current.lossAmount + w.lossAmount,
+        reason: w.reason,
       });
     });
 
     return Array.from(productWaste.entries())
       .map(([productId, data]) => {
-        const product = products.find((p) => p.id === productId)!;
-        const category = categories.find((c) => c.id === product.categoryId)!;
+        const product = products.find((p) => p.id === productId);
+        if (!product) return null;
+        const category = categories.find((c) => c.id === product.categoryId);
+        if (!category) return null;
         return {
           productId,
           productName: product.name,
           categoryName: category.name,
           quantity: data.quantity,
           lossAmount: data.lossAmount,
+          reason: data.reason,
         };
       })
+      .filter((item): item is WasteStatItem => item !== null)
       .sort((a, b) => b.lossAmount - a.lossAmount);
   },
 
-  getDailySalesTrend: (days = 30) => {
+  getWasteByReason: (month) => {
+    const { waste, products, categories } = get();
+    let start: string, end: string;
+
+    if (month) {
+      const [year, monthNum] = month.split('-').map(Number);
+      const monthStart = new Date(year, monthNum - 1, 1);
+      const monthEnd = new Date(year, monthNum, 0);
+      start = monthStart.toISOString().split('T')[0];
+      end = monthEnd.toISOString().split('T')[0];
+    } else {
+      const range = getCurrentMonthRange();
+      start = range.start;
+      end = range.end;
+    }
+
+    const monthWaste = waste.filter((w) => w.wasteDate >= start && w.wasteDate <= end);
+
+    const reasonMap = new Map<string, WasteByReason>();
+
+    monthWaste.forEach((w) => {
+      if (!reasonMap.has(w.reason)) {
+        reasonMap.set(w.reason, {
+          reason: w.reason,
+          quantity: 0,
+          lossAmount: 0,
+          products: [],
+        });
+      }
+
+      const reasonData = reasonMap.get(w.reason)!;
+      reasonData.quantity += w.quantity;
+      reasonData.lossAmount += w.lossAmount;
+
+      const product = products.find((p) => p.id === w.productId);
+      const category = product ? categories.find((c) => c.id === product.categoryId) : null;
+
+      if (product && category) {
+        const existingProduct = reasonData.products.find((p) => p.productId === w.productId);
+        if (existingProduct) {
+          existingProduct.quantity += w.quantity;
+          existingProduct.lossAmount += w.lossAmount;
+        } else {
+          reasonData.products.push({
+            productId: w.productId,
+            productName: product.name,
+            categoryName: category.name,
+            quantity: w.quantity,
+            lossAmount: w.lossAmount,
+            reason: w.reason,
+          });
+        }
+      }
+    });
+
+    return Array.from(reasonMap.values()).sort((a, b) => b.lossAmount - a.lossAmount);
+  },
+
+  getDailySalesTrend: (days = 30, month) => {
     const { sales } = get();
-    const today = getTodayString();
     const trend: DailySalesTrend[] = [];
 
-    for (let i = days - 1; i >= 0; i--) {
-      const date = new Date(today);
-      date.setDate(date.getDate() - i);
-      const dateStr = date.toISOString().split('T')[0];
+    if (month) {
+      const [year, monthNum] = month.split('-').map(Number);
+      const monthStart = new Date(year, monthNum - 1, 1);
+      const monthEnd = new Date(year, monthNum, 0);
 
-      const daySales = sales.filter((s) => s.saleDate === dateStr);
-      const revenue = daySales.reduce((sum, s) => sum + s.totalAmount, 0);
-      const quantity = daySales.reduce((sum, s) => sum + s.quantity, 0);
+      for (let d = new Date(monthStart); d <= monthEnd; d.setDate(d.getDate() + 1)) {
+        const dateStr = d.toISOString().split('T')[0];
+        const daySales = sales.filter((s) => s.saleDate === dateStr);
+        const revenue = daySales.reduce((sum, s) => sum + s.totalAmount, 0);
+        const quantity = daySales.reduce((sum, s) => sum + s.quantity, 0);
 
-      trend.push({
-        date: dateStr,
-        revenue,
-        quantity,
-      });
+        trend.push({
+          date: dateStr,
+          revenue,
+          quantity,
+        });
+      }
+    } else {
+      const today = getTodayString();
+      for (let i = days - 1; i >= 0; i--) {
+        const date = new Date(today);
+        date.setDate(date.getDate() - i);
+        const dateStr = date.toISOString().split('T')[0];
+
+        const daySales = sales.filter((s) => s.saleDate === dateStr);
+        const revenue = daySales.reduce((sum, s) => sum + s.totalAmount, 0);
+        const quantity = daySales.reduce((sum, s) => sum + s.quantity, 0);
+
+        trend.push({
+          date: dateStr,
+          revenue,
+          quantity,
+        });
+      }
     }
 
     return trend;

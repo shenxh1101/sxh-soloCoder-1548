@@ -175,13 +175,28 @@ export default function Dashboard() {
   const handleRecordSale = () => {
     if (!formData.productId || !formData.quantity || !formData.salePrice) return;
 
-    addSale({
-      productId: formData.productId,
-      quantity: parseInt(formData.quantity),
-      unitPrice: parseFloat(formData.salePrice),
-      saleDate: formatDate(new Date()),
-    });
-    handleCloseDialog();
+    const product = products.find((p) => p.id === formData.productId);
+    const qty = parseInt(formData.quantity);
+    const price = parseFloat(formData.salePrice);
+
+    if (!product || isNaN(qty) || isNaN(price) || qty <= 0 || price <= 0) return;
+
+    if (qty > product.currentStock) {
+      alert(`库存不足！当前可用库存仅 ${product.currentStock} 件`);
+      return;
+    }
+
+    try {
+      addSale({
+        productId: formData.productId,
+        quantity: qty,
+        unitPrice: price,
+        saleDate: formatDate(new Date()),
+      });
+      handleCloseDialog();
+    } catch (error: any) {
+      alert(error.message || '销售记录失败，请重试');
+    }
   };
 
   const handleAddProduct = () => {
@@ -804,15 +819,31 @@ export default function Dashboard() {
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="quantity">销售数量</Label>
+                  <Label htmlFor="quantity">
+                    销售数量
+                    {formData.productId && (
+                      <span className="text-muted-foreground ml-2">
+                        (库存: {products.find((p) => p.id === formData.productId)?.currentStock || 0} 件)
+                      </span>
+                    )}
+                  </Label>
                   <Input
                     id="quantity"
                     type="number"
                     min="1"
+                    max={formData.productId ? products.find((p) => p.id === formData.productId)?.currentStock || undefined : undefined}
                     value={formData.quantity}
-                    onChange={(e) =>
-                      setFormData({ ...formData, quantity: e.target.value })
-                    }
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (formData.productId) {
+                        const max = products.find((p) => p.id === formData.productId)?.currentStock || 0;
+                        if (parseInt(val) > max) {
+                          setFormData({ ...formData, quantity: max.toString() });
+                          return;
+                        }
+                      }
+                      setFormData({ ...formData, quantity: val });
+                    }}
                     placeholder="请输入销售数量"
                   />
                 </div>

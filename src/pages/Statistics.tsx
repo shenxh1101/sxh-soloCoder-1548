@@ -43,6 +43,7 @@ import {
   AlertTriangle,
   Trophy,
   Medal,
+  Package,
 } from 'lucide-react';
 import { useStore } from '@/store';
 import { formatDateChinese } from '@/utils/dateUtils';
@@ -131,6 +132,7 @@ export default function Statistics() {
   const {
     getTopSellingProducts,
     getWasteStatistics,
+    getWasteByReason,
     getDailySalesTrend,
     sales,
     waste,
@@ -141,9 +143,15 @@ export default function Statistics() {
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   });
 
-  const topProducts = useMemo(() => getTopSellingProducts(10), [getTopSellingProducts]);
-  const wasteStats = useMemo(() => getWasteStatistics(), [getWasteStatistics]);
-  const salesTrend = useMemo(() => getDailySalesTrend(30), [getDailySalesTrend]);
+  const formatMonthLabel = (monthStr: string) => {
+    const [year, month] = monthStr.split('-');
+    return `${year}年${parseInt(month)}月`;
+  };
+
+  const topProducts = useMemo(() => getTopSellingProducts(10, selectedMonth), [getTopSellingProducts, selectedMonth]);
+  const wasteStats = useMemo(() => getWasteStatistics(selectedMonth), [getWasteStatistics, selectedMonth]);
+  const wasteByReason = useMemo(() => getWasteByReason(selectedMonth), [getWasteByReason, selectedMonth]);
+  const salesTrend = useMemo(() => getDailySalesTrend(30, selectedMonth), [getDailySalesTrend, selectedMonth]);
 
   const monthOptions = useMemo(() => {
     const options = [];
@@ -200,16 +208,22 @@ export default function Statistics() {
   }, [waste, selectedMonth]);
 
   const pieData = useMemo(() => {
-    const categoryMap = new Map<string, number>();
-    wasteStats.forEach((item) => {
-      const current = categoryMap.get(item.categoryName) || 0;
-      categoryMap.set(item.categoryName, current + item.lossAmount);
-    });
-    return Array.from(categoryMap.entries()).map(([name, value]) => ({
-      name,
-      value,
+    return wasteByReason.map((item) => ({
+      name: item.reason,
+      value: item.lossAmount,
     }));
-  }, [wasteStats]);
+  }, [wasteByReason]);
+
+  const expiredWaste = useMemo(() => {
+    const expired = wasteByReason.find((w) => w.reason === '过期未售出');
+    return expired ? expired.lossAmount : 0;
+  }, [wasteByReason]);
+
+  const otherWaste = useMemo(() => {
+    return wasteByReason
+      .filter((w) => w.reason !== '过期未售出')
+      .reduce((sum, w) => sum + w.lossAmount, 0);
+  }, [wasteByReason]);
 
   const trendStats = useMemo(() => {
     const revenues = salesTrend.map((t) => t.revenue);
@@ -317,7 +331,7 @@ export default function Statistics() {
         <TabsContent value="top-selling" className="space-y-6">
           <Card>
             <CardHeader>
-            <CardTitle>本月销量 Top10 商品</CardTitle>
+            <CardTitle>{formatMonthLabel(selectedMonth)} 销量 Top10 商品</CardTitle>
             <CardDescription>
               展示销量最高的商品排行
             </CardDescription>
@@ -406,9 +420,9 @@ export default function Statistics() {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <Card>
               <CardHeader>
-                <CardTitle>分类浪费占比</CardTitle>
+                <CardTitle>{formatMonthLabel(selectedMonth)} 浪费原因占比</CardTitle>
                 <CardDescription>
-                  各分类浪费金额占比分析
+                  各原因浪费金额占比分析
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -461,15 +475,15 @@ export default function Statistics() {
                 </p>
                 <div className="grid grid-cols-2 gap-4 mt-6 w-full">
                   <div className="text-center p-4 bg-red-50 rounded-lg">
-                    <p className="text-sm text-gray-500">过期浪费</p>
+                    <p className="text-sm text-gray-500">过期未售出</p>
                     <p className="text-xl font-bold text-red-600">
-                      ¥{(totalWaste * 0.7).toFixed(2)}
+                      ¥{expiredWaste.toFixed(2)}
                     </p>
                   </div>
                   <div className="text-center p-4 bg-orange-50 rounded-lg">
                     <p className="text-sm text-gray-500">其他原因</p>
                     <p className="text-xl font-bold text-orange-600">
-                      ¥{(totalWaste * 0.3).toFixed(2)}
+                      ¥{otherWaste.toFixed(2)}
                     </p>
                   </div>
                 </div>
@@ -477,45 +491,70 @@ export default function Statistics() {
             </Card>
           </div>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>浪费明细</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>商品名称</TableHead>
-                    <TableHead>分类</TableHead>
-                    <TableHead className="text-right">浪费数量</TableHead>
-                    <TableHead className="text-right">损失金额</TableHead>
-                    <TableHead>原因</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {wasteStats.map((item) => (
-                    <TableRow key={item.productId}>
-                      <TableCell className="font-medium">
-                        {item.productName}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="secondary">{item.categoryName}</Badge>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {item.quantity} 件
-                      </TableCell>
-                      <TableCell className="text-right font-medium text-red-600">
-                        ¥{item.lossAmount.toFixed(2)}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="destructive">过期未售出</Badge>
-                      </TableCell>
+          {wasteByReason.map((reasonGroup, groupIndex) => (
+            <Card key={reasonGroup.reason}>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  {reasonGroup.reason === '过期未售出' ? (
+                    <AlertTriangle className="h-5 w-5 text-red-500" />
+                  ) : (
+                    <Package className="h-5 w-5 text-orange-500" />
+                  )}
+                  {reasonGroup.reason}
+                  <Badge variant={reasonGroup.reason === '过期未售出' ? 'destructive' : 'secondary'}>
+                    ¥{reasonGroup.lossAmount.toFixed(2)}
+                  </Badge>
+                </CardTitle>
+                <CardDescription>
+                  共浪费 {reasonGroup.quantity} 件，{reasonGroup.products.length} 种商品
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>商品名称</TableHead>
+                      <TableHead>分类</TableHead>
+                      <TableHead className="text-right">浪费数量</TableHead>
+                      <TableHead className="text-right">损失金额</TableHead>
+                      <TableHead>原因</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
+                  </TableHeader>
+                  <TableBody>
+                    {reasonGroup.products.map((item) => (
+                      <TableRow key={item.productId}>
+                        <TableCell className="font-medium">
+                          {item.productName}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="secondary">{item.categoryName}</Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {item.quantity} 件
+                        </TableCell>
+                        <TableCell className="text-right font-medium text-red-600">
+                          ¥{item.lossAmount.toFixed(2)}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={item.reason === '过期未售出' ? 'destructive' : 'secondary'}>
+                            {item.reason}
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          ))}
+
+          {wasteByReason.length === 0 && (
+            <Card>
+              <CardContent className="text-center py-8 text-muted-foreground">
+                本月暂无浪费记录
+              </CardContent>
+            </Card>
+          )}
         </TabsContent>
 
         <TabsContent value="sales-trend" className="space-y-6">
@@ -560,7 +599,7 @@ export default function Statistics() {
 
           <Card>
             <CardHeader>
-              <CardTitle>最近30天销售额趋势</CardTitle>
+              <CardTitle>{formatMonthLabel(selectedMonth)} 销售额趋势</CardTitle>
               <CardDescription>
                 每日销售额变化趋势
               </CardDescription>

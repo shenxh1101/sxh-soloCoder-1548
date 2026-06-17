@@ -126,6 +126,14 @@ export interface WasteStatItem {
   categoryName: string;
   quantity: number;
   lossAmount: number;
+  reason: string;
+}
+
+export interface WasteByReason {
+  reason: string;
+  quantity: number;
+  lossAmount: number;
+  products: WasteStatItem[];
 }
 
 export interface DailySalesTrend {

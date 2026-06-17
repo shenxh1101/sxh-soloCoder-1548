@@ -77,7 +77,7 @@ export default function Inventory() {
     markBatchAsWaste,
   } = useStore();
 
-  const [selectedProduct, setSelectedProduct] = useState<string>('');
+  const [selectedProduct, setSelectedProduct] = useState<string>('all');
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
 
   const [inboundProduct, setInboundProduct] = useState<string>('');
@@ -120,7 +120,7 @@ export default function Inventory() {
 
   const filteredBatches = useMemo(() => {
     return enrichedBatches.filter((batch) => {
-      const matchProduct = selectedProduct ? batch.productId === selectedProduct : true;
+      const matchProduct = selectedProduct === 'all' ? true : batch.productId === selectedProduct;
       const matchStatus =
         selectedStatus === 'all'
           ? true
@@ -357,7 +357,7 @@ export default function Inventory() {
                   <Button
                     variant="outline"
                     onClick={() => {
-                      setSelectedProduct('');
+                      setSelectedProduct('all');
                       setSelectedStatus('all');
                     }}
                   >
